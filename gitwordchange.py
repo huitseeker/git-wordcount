@@ -19,9 +19,10 @@ import subprocess
 import sys
 import time
 import zlib
-import urllib2
+import urllib2,urllib,codecs
 from collections import defaultdict
 from pygooglechart import Chart, SimpleLineChart, GroupedVerticalBarChart, Axis
+from Cheetah.Template import Template
 
 GNUPLOT_COMMON = 'set terminal png transparent\nset size 1.0,0.5\n'
 ON_LINUX = (platform.system() == 'Linux')
@@ -368,7 +369,7 @@ class GitDataCollector(DataCollector):
 
                 return old.days,vals,incrs
 
-        def linegraph(self,days,bars,output):
+        def linegraph(self,days,bars,output,title = ""):
                 data = []
                 min_count = 0
                 max_count = 0
@@ -379,20 +380,18 @@ class GitDataCollector(DataCollector):
                         max_count = max(count,max_count)
                         min_count = min(count,min_count)
                         data.append(count)
-                chart = SimpleLineChart(1000,200,y_range=[min_count, max_count])
+                chart = SimpleLineChart(800,350,y_range=[min_count, 60000])
                 chart.add_data(data)
                 # Set the line colour to blue
                 chart.set_colours(['0000FF'])
 
                 # Set the vertical stripes
-                chart.fill_linear_stripes(Chart.CHART, 0, 'CCCCCC', 0.2, 'FFFFFF', 0.2)
+                d = max(1/float(days),round(7/float(days),2))
+                chart.fill_linear_stripes(Chart.CHART, 0, 'CCCCCC', d, 'FFFFFF', d)
 
-                if days >= 30:
-                        fmt = "%d"
-                else:
-                        fmt="%d/%m"
+                fmt="%d/%m"
                 chart.set_axis_labels(Axis.BOTTOM, \
-                                      [date(i).strftime(fmt) for i in range(0,days)])
+                                      [date(i).strftime(fmt) for i in range(0,days,7)])
 
                 # Set the horizontal dotted lines
                 chart.set_grid(0, 25, 5, 5)
@@ -402,13 +401,16 @@ class GitDataCollector(DataCollector):
                 # label.
                 delta = float(max_count-min_count) / 100
                 skip = int(delta) / 5 * 100
-                left_axis = range(0, max_count + 1, skip)
+                left_axis = range(0, 60000 + 1, skip)
                 left_axis[0] = ''
                 chart.set_axis_labels(Axis.LEFT, left_axis)
 
+                if len(title) > 0:
+                        chart.set_title(title % days)
+
                 chart.download(output)
 
-        def bargraph(self,days,bars,output):
+        def bargraph(self,days,bars,output,title = ""):
 
                 data = []
                 min_count = 0
@@ -420,7 +422,7 @@ class GitDataCollector(DataCollector):
                         max_count = max(count,max_count)
                         min_count = min(count,min_count)
                         data.append(count)
-                chart = GroupedVerticalBarChart(1000,300,y_range=[min_count, max_count])
+                chart = GroupedVerticalBarChart(800,300,y_range=[min_count, max_count])
                 chart.add_data(data)
                 chart.set_bar_width(500 / days)
                 # Set the line colour to blue
@@ -440,10 +442,13 @@ class GitDataCollector(DataCollector):
                 # first number because it's obvious and gets in the way of the first X
                 # label.
                 delta = float(max_count-min_count) / 100
-                skip = int(delta) / 5 * 100
+                skip = max(int(delta) / 5 * 100,100)
                 left_axis = range(0, max_count + 1, skip)
                 left_axis[0] = ''
                 chart.set_axis_labels(Axis.LEFT, left_axis)
+
+                if len(title) > 0:
+                        chart.set_title(title % days)
 
                 chart.download(output)
 
@@ -453,14 +458,14 @@ class GitDataCollector(DataCollector):
                 average = reduce(lambda x,y :x+y,vals,0) / len(vals)
                 return average
 
-        def wpdgraph(self,val,output):
+        def wpdgraph(self,val,output, title = ""):
                 width = 500
                 height = 250
                 adjectives = ['lazy','decent','productive','good','fantastic']
                 adjective = adjectives[min(int(val/400),len(adjectives)-1)]
                 labels = '0:|'+adjective+'|1:|slow|faster|Stephen_King'
-                url='http://chart.apis.google.com/chart?cht=gom&chco=FF0000,00FF00&chxt=x,y&chd=t:%s&chs=%sx%s&chxl=%s'
-                url = url % (float(val)/20,width,height,labels)
+                url='http://chart.apis.google.com/chart?cht=gom&chco=FF0000,00FF00&chxt=x,y&chd=t:%s&chs=%sx%s&chxl=%s&chtt=%s'
+                url = url % (float(val)/20,width,height,labels,urllib.quote(title))
 
                 opener = urllib2.urlopen(url)
                 if opener.headers['content-type'] != 'image/png':
@@ -471,6 +476,39 @@ class GitDataCollector(DataCollector):
 g = GitDataCollector()
 revs, data, dates = g.collect('doc/manuscrit-francois')
 old, cal, incrs = g.getcalendar(revs, data, dates)
-g.linegraph(60,cal,'test.png')
-g.bargraph(60,incrs,'test2.png')
-g.wpdgraph(g.wordsperdayavg(60,incrs),'test3.png')
+outdir = os.path.expanduser('~/tmp/git-wordcount')
+g.linegraph(30,cal,os.path.join(outdir,'adv.png'),title="Total number of words (last %s days)")
+g.bargraph(30,incrs,os.path.join(outdir,'incr.png'),title="Words written per day (last %s days)")
+proddays = 7
+while g.wordsperdayavg(proddays,incrs) == 0:
+        proddays = proddays+1
+
+ttl = "Productivity (last %s days)" % proddays
+tmpldir = os.path.expanduser('~/tmp/git-wordcount')
+
+total = cal[datetime.date.today()+datetime.timedelta(-1)]
+print "DEBUG total",total
+avg = g.wordsperdayavg(proddays,incrs)
+
+g.wpdgraph(avg,os.path.join(outdir,'wpd.png'),title=ttl)
+
+remainingwords = (60000 - total)
+remainingdays = remainingwords / avg
+remainingskdays = remainingwords / 2000
+enddate = datetime.date.today() + datetime.timedelta(remainingdays)
+endskdate = datetime.date.today() + datetime.timedelta(remainingskdays)
+datefmt = "%A, %B %d, %Y"
+
+t = Template(
+    file=os.path.join(tmpldir,"dashboard.tmpl"),
+    searchList = {
+                'total' : total,
+                'days' : proddays,
+                'wpd' : avg,
+                'enddate' : enddate.strftime(datefmt),
+                'skenddate' : endskdate.strftime(datefmt),
+    }
+)
+out = codecs.open(os.path.join(outdir,"index.html"), mode="w", encoding='utf-8')
+out.write(unicode(t))
+out.close()
