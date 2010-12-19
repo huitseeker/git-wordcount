@@ -19,10 +19,9 @@ import subprocess
 import sys
 import time
 import zlib
+import urllib2
 from collections import defaultdict
-from pygooglechart import Chart
-from pygooglechart import SimpleLineChart
-from pygooglechart import Axis
+from pygooglechart import Chart, SimpleLineChart, GroupedVerticalBarChart, Axis
 
 GNUPLOT_COMMON = 'set terminal png transparent\nset size 1.0,0.5\n'
 ON_LINUX = (platform.system() == 'Linux')
@@ -346,7 +345,6 @@ class GitDataCollector(DataCollector):
                 firstdate = wordsperday[0][0]
                 # this strongly depende on history having been chronological
                 old = datetime.date.today()-firstdate
-                print "the manuscript is ", old.days , "days old"
 
                 vals = defaultdict(int)
                 incrs = defaultdict(int)
@@ -370,17 +368,18 @@ class GitDataCollector(DataCollector):
 
                 return old.days,vals,incrs
 
-        def graph(self,days,bars):
-                output = 'activity.url'
-
+        def linegraph(self,days,bars,output):
                 data = []
+                min_count = 0
                 max_count = 0
+                date = lambda i:datetime.date.today() + datetime.timedelta(-days + i)
+
                 for i in range(0,days):
-                        date = datetime.date.today() + datetime.timedelta(-days + i)
-                        count = bars[date]
+                        count = bars[date(i)]
                         max_count = max(count,max_count)
+                        min_count = min(count,min_count)
                         data.append(count)
-                chart = SimpleLineChart(550,200,y_range=[0, max_count])
+                chart = SimpleLineChart(1000,200,y_range=[min_count, max_count])
                 chart.add_data(data)
                 # Set the line colour to blue
                 chart.set_colours(['0000FF'])
@@ -388,19 +387,90 @@ class GitDataCollector(DataCollector):
                 # Set the vertical stripes
                 chart.fill_linear_stripes(Chart.CHART, 0, 'CCCCCC', 0.2, 'FFFFFF', 0.2)
 
+                if days >= 30:
+                        fmt = "%d"
+                else:
+                        fmt="%d/%m"
+                chart.set_axis_labels(Axis.BOTTOM, \
+                                      [date(i).strftime(fmt) for i in range(0,days)])
+
                 # Set the horizontal dotted lines
                 chart.set_grid(0, 25, 5, 5)
 
                 # The Y axis labels contains 0 to 100 skipping every 25, but remove the
                 # first number because it's obvious and gets in the way of the first X
                 # label.
-                left_axis = range(0, max_count + 1, 100)
+                delta = float(max_count-min_count) / 100
+                skip = int(delta) / 5 * 100
+                left_axis = range(0, max_count + 1, skip)
                 left_axis[0] = ''
                 chart.set_axis_labels(Axis.LEFT, left_axis)
 
-                chart.download('test.png')
+                chart.download(output)
+
+        def bargraph(self,days,bars,output):
+
+                data = []
+                min_count = 0
+                max_count = 0
+                date = lambda i:datetime.date.today() + datetime.timedelta(-days + i)
+
+                for i in range(0,days):
+                        count = bars[date(i)]
+                        max_count = max(count,max_count)
+                        min_count = min(count,min_count)
+                        data.append(count)
+                chart = GroupedVerticalBarChart(1000,300,y_range=[min_count, max_count])
+                chart.add_data(data)
+                chart.set_bar_width(500 / days)
+                # Set the line colour to blue
+                chart.set_colours(['0000FF'])
+
+                # Set the horizontal dotted lines
+                chart.set_grid(0, 25, 5, 5)
+
+                if days >= 30:
+                        fmt = "%d"
+                else:
+                        fmt="%d/%m"
+                chart.set_axis_labels(Axis.BOTTOM, \
+                                      [date(i).strftime(fmt) for i in range(0,days)])
+
+                # The Y axis labels contains 0 to 100 skipping every 25, but remove the
+                # first number because it's obvious and gets in the way of the first X
+                # label.
+                delta = float(max_count-min_count) / 100
+                skip = int(delta) / 5 * 100
+                left_axis = range(0, max_count + 1, skip)
+                left_axis[0] = ''
+                chart.set_axis_labels(Axis.LEFT, left_axis)
+
+                chart.download(output)
+
+        def wordsperdayavg(self,days,bars):
+                date = lambda i:datetime.date.today() + datetime.timedelta(-days + i)
+                vals = [bars[date(i)] for i in range(0,days)]
+                average = reduce(lambda x,y :x+y,vals,0) / len(vals)
+                return average
+
+        def wpdgraph(self,val,output):
+                width = 500
+                height = 250
+                adjectives = ['lazy','decent','productive','good','fantastic']
+                adjective = adjectives[min(int(val/400),len(adjectives)-1)]
+                labels = '0:|'+adjective+'|1:|slow|faster|Stephen_King'
+                url='http://chart.apis.google.com/chart?cht=gom&chco=FF0000,00FF00&chxt=x,y&chd=t:%s&chs=%sx%s&chxl=%s'
+                url = url % (float(val)/20,width,height,labels)
+
+                opener = urllib2.urlopen(url)
+                if opener.headers['content-type'] != 'image/png':
+                        raise BadContentTypeException('Server responded with a ' \
+                                                      'content-type of %s' % opener.headers['content-type'])
+                open(output, 'wb').write(opener.read())
 
 g = GitDataCollector()
 revs, data, dates = g.collect('doc/manuscrit-francois')
 old, cal, incrs = g.getcalendar(revs, data, dates)
-g.graph(60,incrs)
+g.linegraph(60,cal,'test.png')
+g.bargraph(60,incrs,'test2.png')
+g.wpdgraph(g.wordsperdayavg(60,incrs),'test3.png')
