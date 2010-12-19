@@ -19,6 +19,10 @@ import subprocess
 import sys
 import time
 import zlib
+from collections import defaultdict
+from pygooglechart import Chart
+from pygooglechart import SimpleLineChart
+from pygooglechart import Axis
 
 GNUPLOT_COMMON = 'set terminal png transparent\nset size 1.0,0.5\n'
 ON_LINUX = (platform.system() == 'Linux')
@@ -151,6 +155,9 @@ class DataCollector:
 class GitDataCollector(DataCollector):
 
         def LCS(self,s1,s2):
+                """Theoretically returns the longest common substring
+                between its arguments. Actually implemented with very
+                string assumptions."""
                 # ad-hoc incomplete lcs algo
                 # we suspect a prefix of s2 (new history) is a suffix of s1 (old history)
                 # aka s1 = t,u and s2 = u,v
@@ -196,6 +203,7 @@ class GitDataCollector(DataCollector):
                 return (0,0,0)
 
         def collectrevdata(self,revs):
+                "Returns a dict of word cound data for each commit hash in revs."
                 res = {}
                 for rev in revs:
                         subprocess.check_call('git checkout %s' % rev,shell=True)
@@ -209,14 +217,35 @@ class GitDataCollector(DataCollector):
                 return res
 
         def retrievedate(self,rev):
+                "Returns the datetime corresponding to a given commit hash."
                 commitdate = getpipeoutput(['git show --pretty=format:%at {0}'.format(rev),
                                             'head -n 1']).rstrip('\n')
                 return datetime.datetime.fromtimestamp(float(commitdate))
 
         def collect(self,dir):
+                """Returns history, revdata, revdates, where history is
+                the sequence of commits that occured to the selected
+                branch, and revdata, revdates are runs of collectrevdata
+                and retrievedate on them, respectively. Maintains and uses
+                a cache file to that effect.
+                """
                 DataCollector.collect(self,dir)
                 self.loadCache('cachefile')
+
                 subprocess.check_call(['git','checkout',conf['initbranch']])
+                # do I have to update anything ?
+                try:
+                        knownlatest = self.cache['latest']
+                        latesthash = getpipeoutput(['git rev-list %s -n 1'
+                                                    % conf['initbranch']])
+                        latest = self.retrievedate(latesthash)
+                        if latest == knownlatest:
+                                return (self.cache['revs'],
+                                        self.cache['revdata'],
+                                        self.cache['revdates'])
+                except KeyError:
+                        pass
+
                 # if dir was foo/bar at parent call,
                 # creates a subtree branch reflecting `pwd`/foo/bar of initbranch, named bar
                 created = getpipeoutput(['git branch','grep %s' % self.projectname])
@@ -269,11 +298,9 @@ class GitDataCollector(DataCollector):
                         if (startknownr > 0):
                                 history = knownrevs[:startknownr-1]
                                 toresolve = []
-
                         elif (startr > 0):
                                 history = revs[:startr-1]
                                 toresolve = revs[:startr-1]
-
                         else:
                                 history = []
                                 toresolve = []
@@ -301,21 +328,79 @@ class GitDataCollector(DataCollector):
                 self.cache['revs'] = history
                 self.cache['revdata'] = revdata
                 self.cache['revdates'] = revdates
+                self.cache['latest'] = revdates[history[0]]
                 self.saveCache('cachefile')
 
-                # history is reverse chronological
+                # Cleanup
+                subprocess.check_call(['git','checkout',initbranch])
+                subprocess.check_call(['git','branch','-D', self.projectname])
+
+                return history, revdata, revdates
+
+        def getcalendar(self,history,revdata,revdates):
+                # at this stage, history was antechronological,
                 history.reverse()
-                # for rev in history:
-                #         print revdates[rev].ctime()
-                #         print revdata[rev]
+                wordsperday = map(lambda x: (datetime.date.fromordinal(revdates[x].toordinal()),
+                                        revdata[x]),
+                                  history)
+                firstdate = wordsperday[0][0]
+                # this strongly depende on history having been chronological
+                old = datetime.date.today()-firstdate
+                print "the manuscript is ", old.days , "days old"
 
-                diffs = [(revdata[history[i]] - revdata[history[max(0,i-1)]])
-                         for i in range(0,len(history))]
-                for i in diffs:
-                        print i
+                vals = defaultdict(int)
+                incrs = defaultdict(int)
+                for date,data in wordsperday:
+                        # later (= higher, supposedly) override earlier in the same day
+                        vals[date] = data
 
+                # Pad null vals with vals from previous days
+                # fill out increments
+                latestval = wordsperday[0][1]
+                for i in range(0, old.days):
+                        date = datetime.date.today() + datetime.timedelta(-old.days + i)
+                        if vals[date] == 0:
+                                vals[date] = latestval
+                                incrs[date] = 0
+                        else:
+                                latestval = vals[date]
+                                if date != firstdate:
+                                        yesterday = (date-datetime.timedelta(1))
+                                        incrs[date] = vals[date]-vals[yesterday]
 
+                return old.days,vals,incrs
 
+        def graph(self,days,bars):
+                output = 'activity.url'
+
+                data = []
+                max_count = 0
+                for i in range(0,days):
+                        date = datetime.date.today() + datetime.timedelta(-days + i)
+                        count = bars[date]
+                        max_count = max(count,max_count)
+                        data.append(count)
+                chart = SimpleLineChart(550,200,y_range=[0, max_count])
+                chart.add_data(data)
+                # Set the line colour to blue
+                chart.set_colours(['0000FF'])
+
+                # Set the vertical stripes
+                chart.fill_linear_stripes(Chart.CHART, 0, 'CCCCCC', 0.2, 'FFFFFF', 0.2)
+
+                # Set the horizontal dotted lines
+                chart.set_grid(0, 25, 5, 5)
+
+                # The Y axis labels contains 0 to 100 skipping every 25, but remove the
+                # first number because it's obvious and gets in the way of the first X
+                # label.
+                left_axis = range(0, max_count + 1, 100)
+                left_axis[0] = ''
+                chart.set_axis_labels(Axis.LEFT, left_axis)
+
+                chart.download('test.png')
 
 g = GitDataCollector()
-g.collect('doc/manuscrit-francois')
+revs, data, dates = g.collect('doc/manuscrit-francois')
+old, cal, incrs = g.getcalendar(revs, data, dates)
+g.graph(60,incrs)
