@@ -461,10 +461,10 @@ class GitDataCollector(DataCollector):
         def wpdgraph(self,val,output, title = ""):
                 width = 500
                 height = 250
-                adjectives = ['lazy','decent','productive','good','fantastic']
-                adjective = adjectives[min(int(val/400),len(adjectives)-1)]
-                labels = '0:|'+adjective+'|1:|slow|faster|Stephen_King'
-                url='http://chart.apis.google.com/chart?cht=gom&chco=FF0000,00FF00&chxt=x,y&chd=t:%s&chs=%sx%s&chxl=%s&chtt=%s'
+                adjectives = ['catastrophic','barely decent','acceptable','correct','good']
+                adjective = urllib.quote(adjectives[min(int(val/400),len(adjectives)-1)])
+                labels = '0:|'+adjective+'|1:|slow|faster|Stephen%20King'
+                url='http://chart.apis.google.com/chart?cht=gom&chco=FF0000,00FF00&chxt=x,y&chd=t:%s&chs=%sx%s&chxl=%s&chtt=%s&chls=5|15'
                 url = url % (float(val)/20,width,height,labels,urllib.quote(title))
 
                 opener = urllib2.urlopen(url)
@@ -487,7 +487,6 @@ ttl = "Productivity (last %s days)" % proddays
 tmpldir = os.path.expanduser('~/tmp/git-wordcount')
 
 total = cal[datetime.date.today()+datetime.timedelta(-1)]
-print "DEBUG total",total
 avg = g.wordsperdayavg(proddays,incrs)
 
 g.wpdgraph(avg,os.path.join(outdir,'wpd.png'),title=ttl)
