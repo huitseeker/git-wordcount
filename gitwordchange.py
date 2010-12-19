@@ -53,6 +53,7 @@ conf = {
 #        'commit_begin' : '512ede70596053900ad247414b4bb7794f097f00'
         'commit_begin' : '',
         'authorpattern': 'garillot',
+        'checkoutdir' : '~/coq',
 }
 
 def getpipeoutput(cmds, quiet = True):
@@ -129,10 +130,11 @@ class DataCollector:
 
         ##
         # Load cacheable data
-        def loadCache(self, cachefile):
+        def loadCache(self, cachefile,quiet = True):
                 if not os.path.exists(cachefile):
                         return
-                print >> sys.stderr, 'Loading cache...'
+                if not quiet:
+                        print >> sys.stderr, 'Loading cache...'
                 f = open(cachefile, 'rb')
                 try:
                         self.cache = pickle.loads(zlib.decompress(f.read()))
@@ -144,8 +146,9 @@ class DataCollector:
 
         ##
         # Save cacheable data
-        def saveCache(self, cachefile):
-                print >> sys.stderr, 'Saving cache...'
+        def saveCache(self, cachefile, quiet = True):
+                if not quiet:
+                        print >> sys.stderr, 'Saving cache...'
                 f = open(cachefile, 'wb')
                 #pickle.dump(self.cache, f)
                 data = zlib.compress(pickle.dumps(self.cache))
@@ -206,7 +209,7 @@ class GitDataCollector(DataCollector):
                 "Returns a dict of word cound data for each commit hash in revs."
                 res = {}
                 for rev in revs:
-                        subprocess.check_call('git checkout %s' % rev,shell=True)
+                        subprocess.check_call('git checkout %s' % rev)
                         words = getpipeoutput(['wc -w *.src',
                                                'tail -n 1',
                                                "awk '{print $1}'"])
@@ -473,41 +476,46 @@ class GitDataCollector(DataCollector):
                                                       'content-type of %s' % opener.headers['content-type'])
                 open(output, 'wb').write(opener.read())
 
-g = GitDataCollector()
-revs, data, dates = g.collect('doc/manuscrit-francois')
-old, cal, incrs = g.getcalendar(revs, data, dates)
-outdir = os.path.expanduser('~/tmp/git-wordcount')
-g.linegraph(30,cal,os.path.join(outdir,'adv.png'),title="Total number of words (last %s days)")
-g.bargraph(30,incrs,os.path.join(outdir,'incr.png'),title="Words written per day (last %s days)")
-proddays = 7
-while g.wordsperdayavg(proddays,incrs) == 0:
-        proddays = proddays+1
+def main(tmpldir,outdir):
+        g = GitDataCollector()
+        revs, data, dates = g.collect('doc/manuscrit-francois')
+        old, cal, incrs = g.getcalendar(revs, data, dates)
+        g.linegraph(30,cal,os.path.join(outdir,'adv.png'),title="Total number of words (last %s days)")
+        g.bargraph(30,incrs,os.path.join(outdir,'incr.png'),title="Words written per day (last %s days)")
+        proddays = 7
+        while g.wordsperdayavg(proddays,incrs) == 0:
+                proddays = proddays+1
 
-ttl = "Productivity (last %s days)" % proddays
-tmpldir = os.path.expanduser('~/tmp/git-wordcount')
+        ttl = "Productivity (last %s days)" % proddays
 
-total = cal[datetime.date.today()+datetime.timedelta(-1)]
-avg = g.wordsperdayavg(proddays,incrs)
+        total = cal[datetime.date.today()+datetime.timedelta(-1)]
+        avg = g.wordsperdayavg(proddays,incrs)
 
-g.wpdgraph(avg,os.path.join(outdir,'wpd.png'),title=ttl)
+        g.wpdgraph(avg,os.path.join(outdir,'wpd.png'),title=ttl)
 
-remainingwords = (60000 - total)
-remainingdays = remainingwords / avg
-remainingskdays = remainingwords / 2000
-enddate = datetime.date.today() + datetime.timedelta(remainingdays)
-endskdate = datetime.date.today() + datetime.timedelta(remainingskdays)
-datefmt = "%A, %B %d, %Y"
+        remainingwords = (60000 - total)
+        remainingdays = remainingwords / avg
+        remainingskdays = remainingwords / 2000
+        enddate = datetime.date.today() + datetime.timedelta(remainingdays)
+        endskdate = datetime.date.today() + datetime.timedelta(remainingskdays)
+        datefmt = "%A, %B %d, %Y"
 
-t = Template(
-    file=os.path.join(tmpldir,"dashboard.tmpl"),
-    searchList = {
-                'total' : total,
-                'days' : proddays,
-                'wpd' : avg,
-                'enddate' : enddate.strftime(datefmt),
-                'skenddate' : endskdate.strftime(datefmt),
-    }
-)
-out = codecs.open(os.path.join(outdir,"index.html"), mode="w", encoding='utf-8')
-out.write(unicode(t))
-out.close()
+        t = Template(
+                file=os.path.join(tmpldir,"dashboard.tmpl"),
+                searchList = {
+                        'total' : total,
+                        'days' : proddays,
+                        'wpd' : avg,
+                        'enddate' : enddate.strftime(datefmt),
+                        'skenddate' : endskdate.strftime(datefmt),
+                        }
+                )
+        out = codecs.open(os.path.join(outdir,"index.html"), mode="w", encoding='utf-8')
+        out.write(unicode(t))
+        out.close()
+
+if __name__ == "__main__":
+        tmpldir = os.path.expanduser('~/git-wordcount')
+        outdir = os.path.expanduser('~/dashboard/')
+        os.chdir(os.path.expanduser(conf['checkoutdir']))
+        main(tmpldir,outdir)
