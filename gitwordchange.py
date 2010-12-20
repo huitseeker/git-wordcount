@@ -209,7 +209,7 @@ class GitDataCollector(DataCollector):
                 "Returns a dict of word cound data for each commit hash in revs."
                 res = {}
                 for rev in revs:
-                        subprocess.check_call('git checkout %s' % rev)
+                        subprocess.check_call('git checkout %s' % rev,shell=True)
                         words = getpipeoutput(['wc -w *.src',
                                                'tail -n 1',
                                                "awk '{print $1}'"])
@@ -235,13 +235,13 @@ class GitDataCollector(DataCollector):
                 DataCollector.collect(self,dir)
                 self.loadCache('cachefile')
 
-                subprocess.check_call(['git','checkout',conf['initbranch']])
+                subprocess.check_call(['git','checkout','-q',conf['initbranch']])
+                latesthash = getpipeoutput(['git rev-list %s -n 1'
+                                            % conf['initbranch']])
+                latest = self.retrievedate(latesthash)
                 # do I have to update anything ?
                 try:
                         knownlatest = self.cache['latest']
-                        latesthash = getpipeoutput(['git rev-list %s -n 1'
-                                                    % conf['initbranch']])
-                        latest = self.retrievedate(latesthash)
                         if latest == knownlatest:
                                 return (self.cache['revs'],
                                         self.cache['revdata'],
@@ -249,6 +249,7 @@ class GitDataCollector(DataCollector):
                 except KeyError:
                         pass
 
+                self.cache['latest'] = latest
                 # if dir was foo/bar at parent call,
                 # creates a subtree branch reflecting `pwd`/foo/bar of initbranch, named bar
                 created = getpipeoutput(['git branch','grep %s' % self.projectname])
@@ -331,11 +332,10 @@ class GitDataCollector(DataCollector):
                 self.cache['revs'] = history
                 self.cache['revdata'] = revdata
                 self.cache['revdates'] = revdates
-                self.cache['latest'] = revdates[history[0]]
                 self.saveCache('cachefile')
 
                 # Cleanup
-                subprocess.check_call(['git','checkout',initbranch])
+                subprocess.check_call(['git','checkout',conf['initbranch']])
                 subprocess.check_call(['git','branch','-D', self.projectname])
 
                 return history, revdata, revdates
@@ -343,32 +343,31 @@ class GitDataCollector(DataCollector):
         def getcalendar(self,history,revdata,revdates):
                 # at this stage, history was antechronological,
                 history.reverse()
-                wordsperday = map(lambda x: (datetime.date.fromordinal(revdates[x].toordinal()),
-                                        revdata[x]),
+                wordsperday = map(lambda x: (revdates[x].date(),revdata[x]),
                                   history)
-                firstdate = wordsperday[0][0]
-                # this strongly depende on history having been chronological
+                wordsperday = dict(wordsperday)
+                firstdate = min(wordsperday.keys())
+                # this strongly depends on history having been chronological
                 old = datetime.date.today()-firstdate
 
                 vals = defaultdict(int)
                 incrs = defaultdict(int)
-                for date,data in wordsperday:
+                for date in wordsperday.keys():
                         # later (= higher, supposedly) override earlier in the same day
-                        vals[date] = data
+                        vals[date] = max(wordsperday[date],vals.get(date,wordsperday[date]))
 
                 # Pad null vals with vals from previous days
                 # fill out increments
-                latestval = wordsperday[0][1]
-                for i in range(0, old.days):
+                latestval = wordsperday[firstdate]
+                for i in range(0, old.days+1):
                         date = datetime.date.today() + datetime.timedelta(-old.days + i)
+
                         if vals[date] == 0:
                                 vals[date] = latestval
                                 incrs[date] = 0
                         else:
+                                incrs[date] = vals[date]-latestval
                                 latestval = vals[date]
-                                if date != firstdate:
-                                        yesterday = (date-datetime.timedelta(1))
-                                        incrs[date] = vals[date]-vals[yesterday]
 
                 return old.days,vals,incrs
 
@@ -378,7 +377,7 @@ class GitDataCollector(DataCollector):
                 max_count = 0
                 date = lambda i:datetime.date.today() + datetime.timedelta(-days + i)
 
-                for i in range(0,days):
+                for i in range(0,days+1):
                         count = bars[date(i)]
                         max_count = max(count,max_count)
                         min_count = min(count,min_count)
@@ -420,7 +419,7 @@ class GitDataCollector(DataCollector):
                 max_count = 0
                 date = lambda i:datetime.date.today() + datetime.timedelta(-days + i)
 
-                for i in range(0,days):
+                for i in range(0,days+1):
                         count = bars[date(i)]
                         max_count = max(count,max_count)
                         min_count = min(count,min_count)
@@ -457,7 +456,7 @@ class GitDataCollector(DataCollector):
 
         def wordsperdayavg(self,days,bars):
                 date = lambda i:datetime.date.today() + datetime.timedelta(-days + i)
-                vals = [bars[date(i)] for i in range(0,days)]
+                vals = [bars[date(i)] for i in range(0,days+1)]
                 average = reduce(lambda x,y :x+y,vals,0) / len(vals)
                 return average
 
@@ -480,6 +479,7 @@ def main(tmpldir,outdir):
         g = GitDataCollector()
         revs, data, dates = g.collect('doc/manuscrit-francois')
         old, cal, incrs = g.getcalendar(revs, data, dates)
+
         g.linegraph(30,cal,os.path.join(outdir,'adv.png'),title="Total number of words (last %s days)")
         g.bargraph(30,incrs,os.path.join(outdir,'incr.png'),title="Words written per day (last %s days)")
         proddays = 7
@@ -488,7 +488,7 @@ def main(tmpldir,outdir):
 
         ttl = "Productivity (last %s days)" % proddays
 
-        total = cal[datetime.date.today()+datetime.timedelta(-1)]
+        total = cal[datetime.date.today()]
         avg = g.wordsperdayavg(proddays,incrs)
 
         g.wpdgraph(avg,os.path.join(outdir,'wpd.png'),title=ttl)
