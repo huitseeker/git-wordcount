@@ -424,6 +424,8 @@ class GitDataCollector(DataCollector):
                         max_count = max(count,max_count)
                         min_count = min(count,min_count)
                         data.append(count)
+                # TOFIX: google chart API for negative numbers is too screwy, for now only >0
+                min_count = max (min_count,0)
                 chart = GroupedVerticalBarChart(800,300,y_range=[min_count, max_count])
                 chart.add_data(data)
                 chart.set_bar_width(500 / days)
