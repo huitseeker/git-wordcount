@@ -7,7 +7,7 @@ Script to count words after each commit
 """
 __version__='$Id$'
 
-import datetime
+import datetime,math
 #import getopt
 #import glob
 import os
@@ -491,11 +491,11 @@ def main(tmpldir,outdir):
         ttl = "Productivity (last %s days)" % proddays
 
         total = cal[datetime.date.today()]
-        avg = g.wordsperdayavg(proddays,incrs)
+        avg = math.fabs(g.wordsperdayavg(proddays,incrs))
 
         g.wpdgraph(avg,os.path.join(outdir,'wpd.png'),title=ttl)
 
-        remainingwords = (60000 - total)
+        remainingwords = 60000 - total
         remainingdays = remainingwords / avg
         remainingskdays = remainingwords / 2000
         enddate = datetime.date.today() + datetime.timedelta(remainingdays)
